@@ -86,51 +86,29 @@ app.post("/login", async (req, res) => {const { e_passport, password } = req.bod
   }
 });
 
-// app.get("/user/:id", async (req, res) => {
-//   const userId = req.params.id;
 
-//   try {
-//     const result = await pool.query(
-//       `SELECT u.e_passport, u.full_name, COALESCE(SUM(p.points), 0) AS total_points
-//        FROM Users u
-//        LEFT JOIN Points p ON u.user_id = p.student_id
-//        WHERE u.user_id = $1
-//        GROUP BY u.e_passport, u.full_name`,
-//       [userId]
-//     );
-
-//     if (result.rows.length === 0) {
-//       return res.status(404).json({ error: "User not found" });
-//     }
-
-//     res.json(result.rows[0]); // Return the user's name and points
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-app.post("/saveUser", async (req, res) => {const { username, fullname, facname, secname, token } = req.body;
+app.post("/saveUser", async (req, res) => {const { e_passport, firstname, lastname, email, token, facname, depname } = req.body;
   const role_id = determineRoleId(req.body);
 
   try {
     // Check if the user already exists in the database
     const userExists = await pool.query(
-      `SELECT id FROM users WHERE username = $1`,
-      [username]
+      `SELECT user_id FROM users WHERE e_passport = $1`,
+      [e_passport]
     );
 
     if (userExists.rows.length === 0) {
       // Insert new user if they don't exist
       await pool.query(
-        `INSERT INTO users (username, fullname, facname, secname, role_id, token, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [username, fullname, facname, secname, role_id, token]
+        `INSERT INTO users (e_passport, firstname, lastname, email, token, facname, depname, role_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+        [e_passport, firstname, lastname, email, token, facname, depname, role_id]
       );
     } else {
       // Update existing user
       await pool.query(
-        `UPDATE users SET token = $1, fullname = $2 WHERE username = $3`,
-        [token, fullname, username]
+        `UPDATE users SET token = $1, firstname = $2 , lastname = $3 WHERE e_passport = $4`,
+        [token, firstname, lastname, e_passport]
       );
     }
 
@@ -139,8 +117,8 @@ app.post("/saveUser", async (req, res) => {const { username, fullname, facname, 
       `SELECT r.role_name 
        FROM users u 
        JOIN roles r ON u.role_id = r.role_id 
-       WHERE u.username = $1`,
-      [username]
+       WHERE u.e_passport = $1`,
+      [e_passport]
     );
 
     if (userRole.rows.length > 0) {
@@ -148,12 +126,14 @@ app.post("/saveUser", async (req, res) => {const { username, fullname, facname, 
 
       // Send back user information, including their role
       res.status(200).json({
-        username,
-        fullname,
-        facname,
-        secname,
-        role,
+        e_passport,
+        firstname,
+        lastname,
+        email,
         token,
+        facname,
+        depname,
+        role,
       });
     } else {
       res.status(404).json({ error: "Role not found" });
@@ -166,11 +146,12 @@ app.post("/saveUser", async (req, res) => {const { username, fullname, facname, 
 
 // Function to determine the role_id based on user data
 function determineRoleId(userData) {
-  if (userData.username.startsWith("admin")) return 1; // Admin role
-  if (userData.username.startsWith("staff")) return 2; // Manager role
-  if (userData.username.startsWith("teacher")) return 3; // Manager role
+  if (userData.e_passport.startsWith("admin")) return 1; // Admin role
+  if (userData.e_passport.startsWith("staff")) return 2; // Manager role
+  if (userData.e_passport.startsWith("teacher")) return 3; // Manager role
   return 4; // Default role (e.g., Customer)
 }
+
 
 // Admin
 // app.post("/change-role",authenticateJWT,authorizeRoles("admin"),async (req, res) => {

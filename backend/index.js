@@ -33,58 +33,45 @@ app.use(
   })
 );
 
-// app.post("/api/users", async (req, res) => {
-//   const { username, password, role } = req.body;
+// app.post("/login", async (req, res) => {const { e_passport, password } = req.body;
 //   try {
+//     // Query the database for a user with the provided username, join with Roles table to get role name
 //     const result = await pool.query(
-//       "INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING *",
-//       [username, password, role]
+//       `SELECT u.user_id, u.password, r.role_name 
+//        FROM Users u 
+//        JOIN Roles r ON u.role_id = r.role_id 
+//        WHERE u.e_passport = $1`,
+//       [e_passport]
 //     );
-//     res.json(result.rows[0]);
+//     const user = result.rows[0];
+
+//     // If no user is found, return an error
+//     if (!user) {
+//       return res.status(400).json({ error: "User not found" });
+//     }
+
+//     // Compare the provided password with the hashed password in the database
+//     const isMatch = await bcrypt.compare(password, user.password);
+
+//     // If passwords do not match, return an error
+//     if (!isMatch) {
+//       return res.status(400).json({ error: "Invalid credentials" });
+//     }
+
+//     // Create a JWT token with user_id and role_name
+//     const token = jwt.sign(
+//       { id: user.user_id, role: user.role_name },
+//       "your-secret-key"
+//       // { expiresIn: "1h" } // Optional expiration
+//     );
+
+//     // Send back the token and the user role
+//     res.json({ id: user.user_id, token, role: user.role_name });
 //   } catch (error) {
+//     // Handle any potential errors
 //     res.status(500).json({ error: error.message });
 //   }
 // });
-
-app.post("/login", async (req, res) => {const { e_passport, password } = req.body;
-  try {
-    // Query the database for a user with the provided username, join with Roles table to get role name
-    const result = await pool.query(
-      `SELECT u.user_id, u.password, r.role_name 
-       FROM Users u 
-       JOIN Roles r ON u.role_id = r.role_id 
-       WHERE u.e_passport = $1`,
-      [e_passport]
-    );
-    const user = result.rows[0];
-
-    // If no user is found, return an error
-    if (!user) {
-      return res.status(400).json({ error: "User not found" });
-    }
-
-    // Compare the provided password with the hashed password in the database
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    // If passwords do not match, return an error
-    if (!isMatch) {
-      return res.status(400).json({ error: "Invalid credentials" });
-    }
-
-    // Create a JWT token with user_id and role_name
-    const token = jwt.sign(
-      { id: user.user_id, role: user.role_name },
-      "your-secret-key"
-      // { expiresIn: "1h" } // Optional expiration
-    );
-
-    // Send back the token and the user role
-    res.json({ id: user.user_id, token, role: user.role_name });
-  } catch (error) {
-    // Handle any potential errors
-    res.status(500).json({ error: error.message });
-  }
-});
 
 
 app.post("/saveUser", async (req, res) => {const { e_passport, firstname, lastname, email, token, facname, depname } = req.body;
@@ -144,13 +131,78 @@ app.post("/saveUser", async (req, res) => {const { e_passport, firstname, lastna
   }
 });
 
-// Function to determine the role_id based on user data
 function determineRoleId(userData) {
-  if (userData.e_passport.startsWith("admin")) return 1; // Admin role
-  if (userData.e_passport.startsWith("staff")) return 2; // Manager role
-  if (userData.e_passport.startsWith("teacher")) return 3; // Manager role
-  return 4; // Default role (e.g., Customer)
+  if (userData.e_passport.startsWith("admin")) return 1;
+  if (userData.e_passport.startsWith("staff")) return 2;
+  if (userData.e_passport.startsWith("teacher")) return 3;
+  return 4;
 }
+
+app.get("/api/user/:ePassport", async (req, res) => {
+  const ePassport = req.params.ePassport;
+  try {
+    const result = await pool.query(
+      `SELECT user_id FROM users WHERE e_passport = $1`,
+      [ePassport]
+    );
+
+    if (result.rows.length > 0) {
+      res.json({ user_id: result.rows[0].user_id });
+    } else {
+      res.status(404).json({ error: "User not found" });
+    }
+  } catch (error) {
+    console.error("Error fetching user ID", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// Get Reward History for User
+app.get("/api/reward-history/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  try {
+    const result = await pool.query(
+      `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
+              rr.status, r.points_required, r.reward_id
+       FROM reward_requests rr
+       JOIN rewards r ON rr.reward_id = r.reward_id
+       WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching reward history", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+app.get('/users/:e_passport', async (req, res) => {
+  try {
+    const { e_passport } = req.params;
+
+    const query = `
+      SELECT u.user_id,u.e_passport, u.firstname, u.lastname, u.email, u.facname, u.depname, r.role_name, 
+             COALESCE(rp.total_points, 0) AS total_points,
+             rp.point_expire  -- Fetch point expiration date
+      FROM users u
+      LEFT JOIN roles r ON u.role_id = r.role_id
+      LEFT JOIN reward_points rp ON u.user_id = rp.user_id
+      WHERE u.e_passport = $1;
+    `;
+
+    const result = await pool.query(query, [e_passport]);
+
+    if (result.rows.length > 0) {
+      res.json(result.rows[0]);
+    } else {
+      res.status(404).json({ message: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user details:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
 
 
 // Admin
@@ -176,35 +228,3 @@ app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
 
-// app.post("/login", async (req, res) => {
-//   const { username, password } = req.body;
-
-//   try {
-//     // Query the database for a user with the provided username
-//     const result = await pool.query("SELECT * FROM users WHERE username = $1", [
-//       username,
-//     ]);
-//     const user = result.rows[0];
-
-//     // If no user is found, return an error
-//     if (!user) {
-//       return res.status(400).json({ error: "User not found" });
-//     }
-
-//     // Compare the provided password with the hashed password in the database
-//     const isMatch = await bcrypt.compare(password, user.password);
-
-//     if (!isMatch) {
-//         return res.status(400).json({ error: 'Invalid credentials' });
-//     }
-
-//     // Create a JWT token with user id and role
-//     const token = jwt.sign({ id: user.id, role: user.role }, "your-secret-key");
-
-//     // Send back the token and the user role
-//     res.json({ token, role: user.role });
-//   } catch (error) {
-//     // Handle any potential errors
-//     res.status(500).json({ error: error.message });
-//   }
-// });

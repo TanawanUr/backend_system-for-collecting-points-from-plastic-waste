@@ -163,7 +163,7 @@ app.get("/api/reward-history/:userId", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
-              rr.status, r.points_required, r.reward_id
+              rr.status, r.points_required, r.reward_id , rr.reason
        FROM reward_requests rr
        JOIN rewards r ON rr.reward_id = r.reward_id
        WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
@@ -175,6 +175,182 @@ app.get("/api/reward-history/:userId", async (req, res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
+// app.get("/api/rewards", async (req, res) => {
+//   try {
+//     const result = await pool.query(`
+//       SELECT reward_id, reward_type, reward_name, reward_quantity, points_required
+//       FROM rewards
+//       ORDER BY reward_id ASC
+//     `);
+//     res.json(result.rows);
+//   } catch (error) {
+//     console.error("Error fetching rewards:", error);
+//     res.status(500).json({ error: "Database error" });
+//   }
+// });
+
+app.get("/api/rewards/stationery", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT reward_id, reward_name, reward_quantity, points_required 
+       FROM rewards 
+       WHERE reward_type = 'stationery'`
+    );
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("❌ Error fetching certificates:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.get("/api/rewards/certificates", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT reward_id, reward_name, reward_quantity, points_required 
+       FROM rewards 
+       WHERE reward_type = 'certificate'`
+    );
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("❌ Error fetching certificates:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.post("/api/request-reward", async (req, res) => {
+  const { user_id, reward_id } = req.body; // Student ID & Reward ID from request
+
+  try {
+    // Get the required points & quantity for the reward
+    const rewardQuery = await pool.query(
+      `SELECT points_required, reward_quantity FROM rewards WHERE reward_id = $1`,
+      [reward_id]
+    );
+
+    if (rewardQuery.rows.length === 0) {
+      return res.status(404).json({ error: "Reward not found" });
+    }
+
+    const { points_required, reward_quantity } = rewardQuery.rows[0];
+
+    // Check if there is enough stock
+    if (reward_quantity <= 0) {
+      return res.status(400).json({ error: "Reward is out of stock" });
+    }
+
+    // Get student’s available points
+    const studentQuery = await pool.query(
+      `SELECT total_points FROM reward_points WHERE user_id = $1`,
+      [user_id]
+    );
+
+    if (studentQuery.rows.length === 0 || studentQuery.rows[0].total_points < points_required) {
+      return res.status(400).json({ error: "Insufficient points" });
+    }
+
+    // Deduct reward points from user immediately
+    await pool.query(
+      `UPDATE reward_points SET total_points = total_points - $1 WHERE user_id = $2`,
+      [points_required, user_id]
+    );
+
+    // Insert request into reward_requests table (waiting for approval)
+    await pool.query(
+      `INSERT INTO reward_requests (user_id, reward_id, status, deducted_points) VALUES ($1, $2, 'กำลังรออนุมัติ', $3)`,
+      [user_id, reward_id, points_required]
+    );
+
+    res.status(201).json({ message: "Reward request submitted successfully, points deducted" });
+  } catch (error) {
+    console.error("Error requesting reward:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+app.post("/api/approve-reward", async (req, res) => {
+  const { request_id, approved_by, approval_status, reason } = req.body;
+
+  try {
+    // Get request details
+    const requestQuery = await pool.query(
+      `SELECT user_id, reward_id, deducted_points FROM reward_requests WHERE request_id = $1`,
+      [request_id]
+    );
+
+    if (requestQuery.rows.length === 0) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    const { user_id, reward_id, deducted_points } = requestQuery.rows[0];
+
+    if (approval_status === "อนุมัติ") {
+      // Get required points and reward quantity
+      const rewardQuery = await pool.query(
+        `SELECT reward_quantity FROM rewards WHERE reward_id = $1`,
+        [reward_id]
+      );
+
+      if (rewardQuery.rows.length === 0) {
+        return res.status(404).json({ error: "Reward not found" });
+      }
+
+      const { reward_quantity } = rewardQuery.rows[0];
+
+      // Check if reward is still available
+      if (reward_quantity <= 0) {
+        return res.status(400).json({ error: "Reward is out of stock" });
+      }
+
+      // Decrease reward quantity
+      await pool.query(
+        `UPDATE rewards SET reward_quantity = reward_quantity - 1 WHERE reward_id = $1`,
+        [reward_id]
+      );
+
+      // Update request status to approved and store the reason
+      await pool.query(
+        `UPDATE reward_requests SET status = 'อนุมัติ', reviewed_at = NOW(), reason = $1 WHERE request_id = $2`,
+        [reason, request_id]
+      );
+
+      // Log approval action
+      await pool.query(
+        `INSERT INTO reward_approval (request_id, approved_by, approval_status, reason) VALUES ($1, $2, 'อนุมัติ', $3)`,
+        [request_id, approved_by, reason]
+      );
+
+      return res.status(200).json({ message: "Reward request approved successfully" });
+    } else {
+      // If rejected, refund the points back to the student
+      await pool.query(
+        `UPDATE reward_points SET total_points = total_points + $1 WHERE user_id = $2`,
+        [deducted_points, user_id]
+      );
+
+      // Update request status to rejected and store the reason
+      await pool.query(
+        `UPDATE reward_requests SET status = 'ยกเลิก', reviewed_at = NOW(), reason = $1 WHERE request_id = $2`,
+        [reason, request_id]
+      );
+
+      // Log rejection
+      await pool.query(
+        `INSERT INTO reward_approval (request_id, approved_by, approval_status, reason) VALUES ($1, $2, 'ปฏิเสธ', $3)`,
+        [request_id, approved_by, reason]
+      );
+
+      return res.status(200).json({ message: "Reward request rejected, points refunded" });
+    }
+  } catch (error) {
+    console.error("Error approving request:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 
 
 app.get('/users/:e_passport', async (req, res) => {

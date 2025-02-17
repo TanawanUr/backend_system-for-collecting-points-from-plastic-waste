@@ -1,13 +1,3 @@
-CREATE TABLE "reward" (
-  "reward_id" SERIAL PRIMARY KEY,
-  "reward_type" varchar,
-  "subject_id" int,
-  "des" text,
-  "point_required" int,
-  "create_at" timestamp,
-  "update_at" timestamp
-);
-
 CREATE TABLE "subject" (
   "subject_id" SERIAL PRIMARY KEY,
   "subject_name" varchar(50)
@@ -43,7 +33,8 @@ CREATE TABLE "reward_points" (
 CREATE TABLE "rewards" (
   "reward_id" SERIAL PRIMARY KEY,
   "reward_type" VARCHAR(50) NOT NULL,
-  "description" TEXT NOT NULL,
+  "reward_name" TEXT NOT NULL,
+  "reward_quantity" INT NOT NULL,
   "points_required" INT NOT NULL,
   "created_at" TIMESTAMP DEFAULT (NOW()),
   "updated_at" TIMESTAMP DEFAULT (NOW())
@@ -54,6 +45,7 @@ CREATE TABLE "reward_requests" (
   "user_id" INT,
   "reward_id" INT,
   "status" VARCHAR(20) DEFAULT 'กำลังรออนุมัติ',
+  "deducted_points" INT DEFAULT 0,
   "reason" TEXT,
   "requested_at" TIMESTAMP DEFAULT (NOW()),
   "reviewed_at" TIMESTAMP
@@ -70,17 +62,13 @@ CREATE TABLE "action_logs" (
   "action_timestamp" TIMESTAMP DEFAULT (NOW())
 );
 
-CREATE TABLE "api_role_mapping" (
-  "api_role" VARCHAR(50) PRIMARY KEY,
-  "system_role_id" INT
-);
-
 CREATE TABLE "reward_approval" (
   "approval_id" SERIAL PRIMARY KEY,
   "request_id" INT,
   "approved_by" INT,
   "approval_timestamp" TIMESTAMP DEFAULT (NOW()),
-  "approval_status" VARCHAR(20) NOT NULL
+  "approval_status" VARCHAR(20) NOT NULL,
+  "reason" TEXT
 );
 
 CREATE TABLE "bottle_records" (
@@ -91,8 +79,6 @@ CREATE TABLE "bottle_records" (
   "created_at" TIMESTAMP DEFAULT (NOW())
 );
 
-ALTER TABLE "reward" ADD FOREIGN KEY ("subject_id") REFERENCES "subject" ("subject_id");
-
 ALTER TABLE "users" ADD FOREIGN KEY ("role_id") REFERENCES "roles" ("role_id");
 
 ALTER TABLE "reward_points" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
@@ -102,8 +88,6 @@ ALTER TABLE "reward_requests" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("u
 ALTER TABLE "reward_requests" ADD FOREIGN KEY ("reward_id") REFERENCES "rewards" ("reward_id");
 
 ALTER TABLE "action_logs" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
-
-ALTER TABLE "api_role_mapping" ADD FOREIGN KEY ("system_role_id") REFERENCES "roles" ("role_id");
 
 ALTER TABLE "reward_approval" ADD FOREIGN KEY ("request_id") REFERENCES "reward_requests" ("request_id");
 

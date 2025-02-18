@@ -333,6 +333,37 @@ app.get('/users/:e_passport', async (req, res) => {
 
 /* STAFF */
 
+app.get("/staff/reward-approved", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+          rr.request_id, 
+          u.e_passport, 
+          u.firstname, 
+          u.lastname, 
+          u.facname, 
+          u.depname,
+          r.reward_type, 
+          r.reward_name, 
+          rr.requested_at, 
+          rr.reviewed_at, 
+          rr.status, 
+          r.points_required, 
+          r.reward_id,
+          rr.reason
+       FROM reward_requests rr
+       JOIN rewards r ON rr.reward_id = r.reward_id
+       JOIN users u ON rr.user_id = u.user_id
+       WHERE rr.status IN ('อนุมัติ', 'ยกเลิก')
+       ORDER BY rr.requested_at DESC`
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching approved reward requests", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 app.get("/staff/reward-request-list", async (req, res) => {
   try {
     const result = await pool.query(

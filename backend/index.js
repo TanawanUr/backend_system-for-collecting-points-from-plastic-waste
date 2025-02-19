@@ -5,6 +5,8 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const path = require("path");
+const multer = require("multer");
+const fs = require("fs");
 
 const app = express();
 const port = 3000;
@@ -16,6 +18,22 @@ const pool = new Pool({
   password: "kee1234",
   port: 5432,
 });
+
+// Configure storage options for multer
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    // Save images in the 'images' folder
+    cb(null, path.join(__dirname, "images"));
+  },
+  filename: (req, file, cb) => {
+    // Create a unique filename
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + "-" + file.originalname);
+  },
+});
+
+// Create the multer instance
+const upload = multer({ storage: storage });
 
 // Define the folder that will hold your images
 const imagesPath = path.join(__dirname, "images");
@@ -163,7 +181,7 @@ app.get("/api/reward-history/:userId", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
-              rr.status, r.points_required, r.reward_id , rr.reason
+              rr.status, r.points_required, r.reward_image, r.reward_id , rr.reason
        FROM reward_requests rr
        JOIN rewards r ON rr.reward_id = r.reward_id
        WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
@@ -176,24 +194,10 @@ app.get("/api/reward-history/:userId", async (req, res) => {
   }
 });
 
-// app.get("/api/rewards", async (req, res) => {
-//   try {
-//     const result = await pool.query(`
-//       SELECT reward_id, reward_type, reward_name, reward_quantity, points_required
-//       FROM rewards
-//       ORDER BY reward_id ASC
-//     `);
-//     res.json(result.rows);
-//   } catch (error) {
-//     console.error("Error fetching rewards:", error);
-//     res.status(500).json({ error: "Database error" });
-//   }
-// });
-
 app.get("/api/rewards/stationery", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT reward_id, reward_name, reward_quantity, points_required 
+      `SELECT reward_id, reward_name, reward_quantity, points_required, reward_image
        FROM rewards 
        WHERE reward_type = 'stationery'`
     );
@@ -208,7 +212,7 @@ app.get("/api/rewards/stationery", async (req, res) => {
 app.get("/api/rewards/certificates", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT reward_id, reward_name, reward_quantity, points_required 
+      `SELECT reward_id, reward_name, reward_quantity, points_required, reward_image
        FROM rewards 
        WHERE reward_type = 'certificate'`
     );
@@ -333,6 +337,148 @@ app.get('/users/:e_passport', async (req, res) => {
 
 /* STAFF */
 
+app.post("/staff/add-reward", upload.single("reward_image"), async (req, res) => {
+  const { reward_type, reward_name, reward_quantity, points_required } = req.body;
+  
+  if (!reward_name || !reward_quantity || !points_required) {
+    return res.status(400).json({ error: "Missing required reward details" });
+  }
+
+  const type = reward_type || "stationery";
+
+  try {
+    // First, insert the new reward into the database with a temporary NULL for reward_image
+    const result = await pool.query(
+      `INSERT INTO rewards (reward_type, reward_name, reward_quantity, points_required, reward_image)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING reward_id`,
+      [type, reward_name, reward_quantity, points_required, null]
+    );
+    const reward_id = result.rows[0].reward_id;
+
+    // If a file was uploaded, rename it and update the database
+    if (req.file) {
+      // Log the uploaded file info for debugging
+      console.log('Uploaded file:', req.file);
+
+      // Get the file extension from the original filename
+      const extension = path.extname(req.file.originalname);
+      // Create the new filename in the format reward_{reward_id}.{extension}
+      const newFileName = `reward_${reward_id}${extension}`;
+      const oldPath = path.join(imagesPath, req.file.filename);
+      const newPath = path.join(imagesPath, newFileName);
+
+      // Rename the file and update the reward_image in the database
+      fs.rename(oldPath, newPath, async (err) => {
+        if (err) {
+          console.error('Error renaming file:', err);
+          return res.status(500).json({ error: "File renaming failed" });
+        }
+        try {
+          // Update the reward record with the new image filename
+          await pool.query(
+            `UPDATE rewards SET reward_image = $1 WHERE reward_id = $2`,
+            [newFileName, reward_id]
+          );
+          res.status(201).json({
+            message: "Reward added successfully",
+            reward_id: reward_id,
+            reward_image: newFileName,
+          });
+        } catch (updateErr) {
+          console.error("Error updating reward with image name:", updateErr);
+          res.status(500).json({ error: "Database update failed" });
+        }
+      });
+    } else {
+      // No file was uploaded; respond normally.
+      res.status(201).json({
+        message: "Reward added successfully (no image uploaded)",
+        reward_id: reward_id,
+        reward_image: null,
+      });
+    }
+  } catch (error) {
+    console.error("Error adding reward:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.put("/staff/edit-reward/:reward_id", upload.single("reward_image"), async (req, res) => {
+  const { reward_id } = req.params;
+  const { reward_name, reward_quantity, points_required, reward_type } = req.body;
+  
+  try {
+    // First, update the basic reward details
+    await pool.query(
+      `UPDATE rewards SET reward_name = $1, reward_quantity = $2, points_required = $3, reward_type = $4 WHERE reward_id = $5`,
+      [reward_name, reward_quantity, points_required, reward_type, reward_id]
+    );
+    
+    // If a new image was uploaded, handle renaming & update reward_image column
+    if (req.file) {
+      const extension = path.extname(req.file.originalname) || '.jpg';
+      const newFileName = `reward_${reward_id}${extension}`;
+      const oldPath = path.join(imagesPath, req.file.filename);
+      const newPath = path.join(imagesPath, newFileName);
+      
+      fs.rename(oldPath, newPath, async (err) => {
+        if (err) {
+          console.error('Error renaming file:', err);
+          return res.status(500).json({ error: "File renaming failed" });
+        }
+        try {
+          await pool.query(
+            `UPDATE rewards SET reward_image = $1 WHERE reward_id = $2`,
+            [newFileName, reward_id]
+          );
+          res.status(200).json({ message: "Reward updated successfully" });
+        } catch (updateErr) {
+          console.error("Error updating reward image:", updateErr);
+          res.status(500).json({ error: "Database update failed" });
+        }
+      });
+    } else {
+      res.status(200).json({ message: "Reward updated successfully" });
+    }
+  } catch (error) {
+    console.error("Error updating reward:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.delete("/staff/delete-reward/:reward_id", async (req, res) => {
+  const reward_id = req.params.reward_id;
+
+  try {
+    // Optionally, get the reward's image filename so you can delete the file from disk
+    const result = await pool.query(`SELECT reward_image FROM rewards WHERE reward_id = $1`, [reward_id]);
+    const reward = result.rows[0];
+
+    if (!reward) {
+      return res.status(404).json({ error: "Reward not found" });
+    }
+
+    // Delete the reward from the database
+    await pool.query(`DELETE FROM rewards WHERE reward_id = $1`, [reward_id]);
+
+    // Optionally, delete the image file if it exists
+    if (reward.reward_image) {
+      const filePath = path.join(imagesPath, reward.reward_image);
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.error("Error deleting image file:", err);
+        }
+      });
+    }
+
+    res.status(200).json({ message: "Reward deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting reward:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 app.get("/staff/reward-approved", async (req, res) => {
   try {
     const result = await pool.query(
@@ -349,6 +495,7 @@ app.get("/staff/reward-approved", async (req, res) => {
           rr.reviewed_at, 
           rr.status, 
           r.points_required, 
+          r.reward_image,
           r.reward_id,
           rr.reason
        FROM reward_requests rr
@@ -380,6 +527,7 @@ app.get("/staff/reward-request-list", async (req, res) => {
           rr.reviewed_at, 
           rr.status, 
           r.points_required, 
+          r.reward_image,
           r.reward_id,
           rr.reason
        FROM reward_requests rr

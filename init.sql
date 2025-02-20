@@ -1,3 +1,9 @@
+CREATE TABLE "global_settings" (
+  "setting_name" VARCHAR(50) PRIMARY KEY,
+  "setting_value" TEXT NOT NULL
+);
+
+
 CREATE TABLE "subject" (
   "subject_id" SERIAL PRIMARY KEY,
   "subject_name" varchar(50)
@@ -94,3 +100,9 @@ ALTER TABLE "reward_approval" ADD FOREIGN KEY ("request_id") REFERENCES "reward_
 ALTER TABLE "reward_approval" ADD FOREIGN KEY ("approved_by") REFERENCES "users" ("user_id");
 
 ALTER TABLE "bottle_records" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
+
+INSERT INTO "global_settings" ("setting_name", "setting_value")
+VALUES ('point_expire', '2025-12-31');
+
+INSERT INTO "roles" ("role_id", "role_name")
+VALUES ('1','admin'), ('2','staff'), ('3','professor'), ('4','student');

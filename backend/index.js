@@ -194,41 +194,41 @@ app.get("/api/reward-history/:userId", async (req, res) => {
   }
 });
 
-// app.get("/api/user-history/:userId", async (req, res) => {
-//   const userId = req.params.userId;
-//   try {
-//     // Fetch reward history
-//     const rewardHistory = await pool.query(
-//       `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
-//               rr.status, r.points_required, r.reward_image, r.reward_id , rr.reason
-//        FROM reward_requests rr
-//        JOIN rewards r ON rr.reward_id = r.reward_id
-//        WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
-//       [userId]
-//     );
+app.get("/api/user-history/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  try {
+    // Fetch reward history
+    const rewardHistory = await pool.query(
+      `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
+              rr.status, r.points_required, r.reward_image, r.reward_id , rr.reason
+       FROM reward_requests rr
+       JOIN rewards r ON rr.reward_id = r.reward_id
+       WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
+      [userId]
+    );
 
-//     // Fetch affective scores
-//     const affectiveScores = await pool.query(
-//       `SELECT a.score_id, a.score, a.date_recorded, s.subject_name, 
-//               u.firstname, u.lastname, u.facname, u.depname
-//        FROM affective_scores a
-//        JOIN subject s ON a.subject_id = s.subject_id
-//        JOIN users u ON a.user_id = u.user_id
-//        WHERE a.user_id = $1
-//        ORDER BY a.date_recorded DESC`,
-//       [userId]
-//     );
+    // Fetch affective scores
+    const affectiveScores = await pool.query(
+      `SELECT a.score_id, a.score, a.date_recorded, s.subject_name, 
+              u.firstname, u.lastname, u.facname, u.depname
+       FROM affective_scores a
+       JOIN subject s ON a.subject_id = s.subject_id
+       JOIN users u ON a.user_id = u.user_id
+       WHERE a.user_id = $1
+       ORDER BY a.date_recorded DESC`,
+      [userId]
+    );
 
-//     // Combine both responses
-//     res.json({
-//       rewardHistory: rewardHistory.rows,
-//       affectiveScores: affectiveScores.rows,
-//     });
-//   } catch (error) {
-//     console.error("Error fetching user history", error);
-//     res.status(500).json({ error: "Database error" });
-//   }
-// });
+    // Combine both responses
+    res.json({
+      rewardHistory: rewardHistory.rows,
+      affectiveScores: affectiveScores.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching user history", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
 
 
 app.get("/api/rewards/stationery", async (req, res) => {
@@ -252,6 +252,21 @@ app.get("/api/rewards/certificates", async (req, res) => {
       `SELECT reward_id, reward_name, reward_quantity, points_required, reward_image
        FROM rewards 
        WHERE reward_type = 'certificate'`
+    );
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("❌ Error fetching certificates:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.get("/api/rewards/affectivescore", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT reward_id, reward_name, reward_quantity, points_required
+       FROM rewards 
+       WHERE reward_type = 'affective_score'`
     );
 
     res.status(200).json(result.rows);
@@ -366,6 +381,69 @@ app.get('/users/:e_passport', async (req, res) => {
 
 /* PROFESSOR */
 
+app.get("/professor/request-list", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+          rr.request_id, 
+          u.e_passport, 
+          u.firstname, 
+          u.lastname, 
+          u.facname, 
+          u.depname,
+          r.reward_type, 
+          r.reward_name, 
+          rr.requested_at, 
+          rr.reviewed_at, 
+          rr.status, 
+          r.points_required, 
+          r.reward_image,
+          r.reward_id,
+          rr.reason
+       FROM reward_requests rr
+       JOIN rewards r ON rr.reward_id = r.reward_id
+       JOIN users u ON rr.user_id = u.user_id
+       WHERE r.reward_type = 'affective_score' AND rr.status = 'กำลังรออนุมัติ'
+       ORDER BY rr.requested_at DESC`
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching pending reward requests", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+app.get("/professor/affective-hisotry", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+          rr.request_id, 
+          u.e_passport, 
+          u.firstname, 
+          u.lastname, 
+          u.facname, 
+          u.depname,
+          r.reward_type, 
+          r.reward_name, 
+          rr.requested_at, 
+          rr.reviewed_at, 
+          rr.status, 
+          r.points_required, 
+          r.reward_id,
+          rr.reason
+       FROM reward_requests rr
+       JOIN rewards r ON rr.reward_id = r.reward_id
+       JOIN users u ON rr.user_id = u.user_id
+       WHERE r.reward_type = 'affective_score' AND rr.status IN ('อนุมัติ', 'ยกเลิก')
+       ORDER BY rr.reviewed_at DESC`
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching approved reward requests", error);
+    res.status(500).json({ error: "Database error" });
+  }
+});
 
 
 
@@ -538,7 +616,7 @@ app.get("/staff/reward-approved", async (req, res) => {
        FROM reward_requests rr
        JOIN rewards r ON rr.reward_id = r.reward_id
        JOIN users u ON rr.user_id = u.user_id
-       WHERE rr.status IN ('อนุมัติ', 'ยกเลิก')
+       WHERE r.reward_type = 'stationery' AND rr.status IN ('อนุมัติ', 'ยกเลิก')
        ORDER BY rr.reviewed_at DESC`
     );
     res.status(200).json(result.rows);

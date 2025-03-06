@@ -3,6 +3,14 @@ CREATE TABLE "global_settings" (
   "setting_value" TEXT NOT NULL
 );
 
+CREATE TABLE "affective_scores" (
+  "score_id" SERIAL PRIMARY KEY,
+  "user_id" INT,
+  "subject_id" INT,
+  "score" INT NOT NULL,
+  "created_at" TIMESTAMP DEFAULT (NOW()),
+  "updated_at" TIMESTAMP DEFAULT (NOW())
+);
 
 CREATE TABLE "subject" (
   "subject_id" SERIAL PRIMARY KEY,

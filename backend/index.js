@@ -805,6 +805,120 @@ app.put('/staff/point_expire', async (req, res) => {
 
 /* ADMIN */
 
+app.get('/api/get-staff', async (req, res) => {
+  try {
+    const query = `
+      SELECT u.user_id, u.e_passport, u.firstname, u.lastname, u.email, u.facname, u.depname, r.role_id
+      FROM users u
+      LEFT JOIN roles r ON u.role_id = r.role_id
+      WHERE u.role_id IN (2, 3);
+    `;
+
+    const result = await pool.query(query);
+
+    if (result.rows.length > 0) {
+      res.json(result.rows);
+    } else {
+      res.status(404).json({ message: 'No users found' });
+    }
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.put('/users/role', async (req, res) => {
+  try {
+    const { e_passport, new_role_id } = req.body;
+
+    // Validate that the new role can only be 2 or 3
+    if (![2, 3].includes(new_role_id)) {
+      return res.status(400).json({ error: 'Invalid role. Role can only be changed to 2 (staff) or 3 (professor).' });
+    }
+
+    // Check if user exists and already has role 2 or 3
+    const checkUserQuery = `SELECT role_id FROM users WHERE e_passport = $1 AND role_id IN (2, 3);`;
+    const userResult = await pool.query(checkUserQuery, [e_passport]);
+
+    // Update the role
+    const updateQuery = `
+      UPDATE users 
+      SET role_id = $1, updated_at = NOW()
+      WHERE e_passport = $2
+      RETURNING *;
+    `;
+
+    const result = await pool.query(updateQuery, [new_role_id, e_passport]);
+
+    if (result.rowCount > 0) {
+      res.json({ message: 'Role updated successfully', user: result.rows[0] });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error updating role:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.put('/users/:user_id/role', async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    const { new_role_id } = req.body;
+
+    // Ensure the new role is only 2 or 3
+    if (![2, 3].includes(new_role_id)) {
+      return res.status(400).json({ error: 'Invalid role. Role can only be changed between 2 (staff) and 3 (professor).' });
+    }
+
+    const query = `
+      UPDATE users 
+      SET role_id = $1, updated_at = NOW()
+      WHERE user_id = $2 AND role_id IN (2, 3)
+      RETURNING *;
+    `;
+
+    const result = await pool.query(query, [new_role_id, user_id]);
+
+    if (result.rowCount > 0) {
+      res.json({ message: 'Role updated successfully', user: result.rows[0] });
+    } else {
+      res.status(404).json({ error: 'User not found or role change not allowed' });
+    }
+  } catch (error) {
+    console.error('Error updating role:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.delete('/users/:user_id/role', async (req, res) => {
+  try {
+    const { user_id } = req.params;
+
+    const query = `
+      UPDATE users 
+      SET role_id = 4, updated_at = NOW()
+      WHERE user_id = $1 AND role_id IN (2, 3)
+      RETURNING *;
+    `;
+
+    const result = await pool.query(query, [user_id]);
+
+    if (result.rowCount > 0) {
+      res.json({ message: 'Role reset to default (student)', user: result.rows[0] });
+    } else {
+      res.status(404).json({ error: 'User not found or role reset not allowed' });
+    }
+  } catch (error) {
+    console.error('Error resetting role:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
+
+
+
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });

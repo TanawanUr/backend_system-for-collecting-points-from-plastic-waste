@@ -7,6 +7,7 @@ const bcrypt = require("bcryptjs");
 const path = require("path");
 const multer = require("multer");
 const fs = require("fs");
+const WebSocket = require("ws");
 
 const app = express();
 const port = 3000;

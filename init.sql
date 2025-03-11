@@ -1,6 +1,12 @@
-CREATE TABLE "global_settings" (
-  "setting_name" VARCHAR(50) PRIMARY KEY,
-  "setting_value" TEXT NOT NULL
+CREATE TABLE "action_logs" (
+  "log_id" SERIAL PRIMARY KEY,
+  "user_id" INT,
+  "action_description" TEXT NOT NULL,
+  "faculty" VARCHAR(100),
+  "department" VARCHAR(100),
+  "action_month" INT,
+  "action_year" INT,
+  "action_timestamp" TIMESTAMP DEFAULT (NOW())
 );
 
 CREATE TABLE "affective_scores" (
@@ -12,14 +18,58 @@ CREATE TABLE "affective_scores" (
   "updated_at" TIMESTAMP DEFAULT (NOW())
 );
 
-CREATE TABLE "subject" (
-  "subject_id" SERIAL PRIMARY KEY,
-  "subject_name" varchar(50)
+CREATE TABLE "global_settings" (
+  "setting_name" VARCHAR(50) PRIMARY KEY,
+  "setting_value" TEXT NOT NULL
+);
+
+CREATE TABLE "reward_approval" (
+  "approval_id" SERIAL PRIMARY KEY,
+  "request_id" INT,
+  "approved_by" INT,
+  "approval_timestamp" TIMESTAMP DEFAULT (NOW()),
+  "approval_status" VARCHAR(20) NOT NULL,
+  "reason" TEXT
+);
+
+CREATE TABLE "reward_points" (
+  "point_id" SERIAL PRIMARY KEY,
+  "user_id" INT,
+  "total_points" INT NOT NULL DEFAULT 0,
+  "point_expire" date,
+  "updated_at" TIMESTAMP DEFAULT (NOW())
+);
+
+CREATE TABLE "reward_requests" (
+  "request_id" SERIAL PRIMARY KEY,
+  "user_id" INT,
+  "reward_id" INT,
+  "status" VARCHAR(20) DEFAULT 'กำลังรออนุมัติ',
+  "deducted_points" INT DEFAULT 0,
+  "reason" TEXT,
+  "requested_at" TIMESTAMP DEFAULT (NOW()),
+  "reviewed_at" TIMESTAMP
+);
+
+CREATE TABLE "rewards" (
+  "reward_id" SERIAL PRIMARY KEY,
+  "reward_type" VARCHAR(50) NOT NULL,
+  "reward_name" TEXT NOT NULL,
+  "reward_quantity" INT NOT NULL,
+  "points_required" INT NOT NULL,
+  "reward_image" TEXT,
+  "created_at" TIMESTAMP DEFAULT (NOW()),
+  "updated_at" TIMESTAMP DEFAULT (NOW())
 );
 
 CREATE TABLE "roles" (
   "role_id" SERIAL PRIMARY KEY,
   "role_name" VARCHAR(50) UNIQUE NOT NULL
+);
+
+CREATE TABLE "subject" (
+  "subject_id" SERIAL PRIMARY KEY,
+  "subject_name" varchar(50)
 );
 
 CREATE TABLE "users" (
@@ -36,62 +86,6 @@ CREATE TABLE "users" (
   "updated_at" TIMESTAMP DEFAULT (NOW())
 );
 
-CREATE TABLE "reward_points" (
-  "point_id" SERIAL PRIMARY KEY,
-  "user_id" INT,
-  "total_points" INT NOT NULL DEFAULT 0,
-  "point_expire" date,
-  "updated_at" TIMESTAMP DEFAULT (NOW())
-);
-
-CREATE TABLE "rewards" (
-  "reward_id" SERIAL PRIMARY KEY,
-  "reward_type" VARCHAR(50) NOT NULL,
-  "reward_name" TEXT NOT NULL,
-  "reward_quantity" INT NOT NULL,
-  "points_required" INT NOT NULL,
-  "created_at" TIMESTAMP DEFAULT (NOW()),
-  "updated_at" TIMESTAMP DEFAULT (NOW())
-);
-
-CREATE TABLE "reward_requests" (
-  "request_id" SERIAL PRIMARY KEY,
-  "user_id" INT,
-  "reward_id" INT,
-  "status" VARCHAR(20) DEFAULT 'กำลังรออนุมัติ',
-  "deducted_points" INT DEFAULT 0,
-  "reason" TEXT,
-  "requested_at" TIMESTAMP DEFAULT (NOW()),
-  "reviewed_at" TIMESTAMP
-);
-
-CREATE TABLE "action_logs" (
-  "log_id" SERIAL PRIMARY KEY,
-  "user_id" INT,
-  "action_description" TEXT NOT NULL,
-  "faculty" VARCHAR(100),
-  "department" VARCHAR(100),
-  "action_month" INT,
-  "action_year" INT,
-  "action_timestamp" TIMESTAMP DEFAULT (NOW())
-);
-
-CREATE TABLE "reward_approval" (
-  "approval_id" SERIAL PRIMARY KEY,
-  "request_id" INT,
-  "approved_by" INT,
-  "approval_timestamp" TIMESTAMP DEFAULT (NOW()),
-  "approval_status" VARCHAR(20) NOT NULL,
-  "reason" TEXT
-);
-
-CREATE TABLE "bottle_records" (
-  "record_id" SERIAL PRIMARY KEY,
-  "user_id" INT,
-  "bottle_count" INT NOT NULL,
-  "image_url" TEXT,
-  "created_at" TIMESTAMP DEFAULT (NOW())
-);
 
 ALTER TABLE "users" ADD FOREIGN KEY ("role_id") REFERENCES "roles" ("role_id");
 
@@ -111,6 +105,9 @@ ALTER TABLE "bottle_records" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("us
 
 INSERT INTO "global_settings" ("setting_name", "setting_value")
 VALUES ('point_expire', '2025-12-31');
+
+INSERT INTO "subjet" ("subject_name")
+VALUES ('การเขียนโปรแกรม'), ('คิดนอกกรอบ')
 
 INSERT INTO "roles" ("role_id", "role_name")
 VALUES ('1','admin'), ('2','staff'), ('3','professor'), ('4','student');

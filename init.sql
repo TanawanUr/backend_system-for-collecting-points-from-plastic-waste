@@ -114,8 +114,8 @@ ALTER TABLE "bottle_records" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("us
 INSERT INTO "global_settings" ("setting_name", "setting_value")
 VALUES ('point_expire', '2025-12-31');
 
-INSERT INTO "subjet" ("subject_name")
-VALUES ('การเขียนโปรแกรม'), ('คิดนอกกรอบ')
+INSERT INTO "subject" ("subject_name")
+VALUES ('การเขียนโปรแกรม'), ('คิดนอกกรอบ');
 
 INSERT INTO "roles" ("role_id", "role_name")
 VALUES ('1','admin'), ('2','staff'), ('3','professor'), ('4','student');

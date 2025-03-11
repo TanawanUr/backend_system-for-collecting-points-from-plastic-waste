@@ -18,6 +18,14 @@ CREATE TABLE "affective_scores" (
   "updated_at" TIMESTAMP DEFAULT (NOW())
 );
 
+CREATE TABLE "bottle_records" (
+  "record_id" SERIAL PRIMARY KEY,
+  "user_id" INT,
+  "bottle_count" INT,
+  "image_url" TEXT,
+  "create_at" DATE DEFAULT (NOW()),
+);
+
 CREATE TABLE "global_settings" (
   "setting_name" VARCHAR(50) PRIMARY KEY,
   "setting_value" TEXT NOT NULL

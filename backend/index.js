@@ -52,48 +52,85 @@ app.use(
   })
 );
 
-// app.post("/login", async (req, res) => {const { e_passport, password } = req.body;
-//   try {
-//     // Query the database for a user with the provided username, join with Roles table to get role name
-//     const result = await pool.query(
-//       `SELECT u.user_id, u.password, r.role_name 
-//        FROM Users u 
-//        JOIN Roles r ON u.role_id = r.role_id 
-//        WHERE u.e_passport = $1`,
-//       [e_passport]
-//     );
-//     const user = result.rows[0];
+const WS_PORT = 8080;
 
-//     // If no user is found, return an error
-//     if (!user) {
-//       return res.status(400).json({ error: "User not found" });
-//     }
+const wss = new WebSocket.Server({ port: WS_PORT }, () => {
+  console.log(`WebSocket server listening on ws://localhost:${WS_PORT}`);
+});
 
-//     // Compare the provided password with the hashed password in the database
-//     const isMatch = await bcrypt.compare(password, user.password);
+let espSocket = null;
+let flutterSocket = null;
+let latestCount = 0;
+let latestUserId = "";
+const imagePath = path.join(__dirname, "latest_image.jpg");
 
-//     // If passwords do not match, return an error
-//     if (!isMatch) {
-//       return res.status(400).json({ error: "Invalid credentials" });
-//     }
+wss.on("connection", (ws) => {
+  console.log("New client connected");
 
-//     // Create a JWT token with user_id and role_name
-//     const token = jwt.sign(
-//       { id: user.user_id, role: user.role_name },
-//       "your-secret-key"
-//       // { expiresIn: "1h" } // Optional expiration
-//     );
+  ws.on("message", (message) => {
+    const data = message.toString();
+    console.log("Received:", data);
 
-//     // Send back the token and the user role
-//     res.json({ id: user.user_id, token, role: user.role_name });
-//   } catch (error) {
-//     // Handle any potential errors
-//     res.status(500).json({ error: error.message });
-//   }
-// });
+    // Identify ESP and Flutter
+    if (data === "ESP_CONNECTED") {
+      espSocket = ws;
+      console.log("ESP32 connected");
+    } else if (data === "FLUTTER_CONNECTED") {
+      flutterSocket = ws;
+      if (espSocket) {
+        espSocket.send("FLUTTER_CONNECTED");
+        console.log("Flutter connected, message sent to ESP");
+      } else {
+        console.log("ESP not connected, can't send FLUTTER_CONNECTED");
+      }
+    }
+    
 
+    // Handle messages
+    if (data.startsWith("USER_ID:")) {
+      if (espSocket) {
+        espSocket.send(data);
+        console.log(`User ID sent to ESP: ${data}`);
+      } else {
+        console.log("ESP not connected!");
+      }
+    } else if (data.startsWith("COUNT:")) {
+      if (flutterSocket) {
+        flutterSocket.send(data);
+        console.log(`Count sent to Flutter: ${data}`);
+      } else {
+        console.log("Flutter not connected!");
+      }
+    } else if (data.startsWith("IMAGE:")) {
+        const base64Data = data.split(":")[1];
+        const imageBuffer = Buffer.from(base64Data, "base64");
+        
+        // Save the image or upload to the database
+        fs.writeFileSync("image.jpg", imageBuffer);
+        console.log("Image saved!");
+        if (flutterSocket) {
+          flutterSocket.send(data);
+          console.log("Image sent to Flutter");
+        }
+      }
+  });
 
-app.post("/saveUser", async (req, res) => {const { e_passport, firstname, lastname, email, token, facname, depname } = req.body;
+  ws.on("close", () => {
+    if (ws === espSocket) {
+      espSocket = null;
+      console.log("ESP32 disconnected");
+    }
+    if (ws === flutterSocket) {
+      flutterSocket = null;
+      espSocket.send("FLUTTER_DISCONNECTED");
+      console.log("Flutter disconnected");
+    }
+  });
+});
+
+app.post("/saveUser", async (req, res) => {
+  const { e_passport, firstname, lastname, email, token, facname, depname } =
+    req.body;
   const role_id = determineRoleId(req.body);
 
   try {
@@ -108,7 +145,16 @@ app.post("/saveUser", async (req, res) => {const { e_passport, firstname, lastna
       await pool.query(
         `INSERT INTO users (e_passport, firstname, lastname, email, token, facname, depname, role_id, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-        [e_passport, firstname, lastname, email, token, facname, depname, role_id]
+        [
+          e_passport,
+          firstname,
+          lastname,
+          email,
+          token,
+          facname,
+          depname,
+          role_id,
+        ]
       );
     } else {
       // Update existing user
@@ -231,7 +277,6 @@ app.get("/api/user-history/:userId", async (req, res) => {
   }
 });
 
-
 app.get("/api/rewards/stationery", async (req, res) => {
   try {
     const result = await pool.query(
@@ -304,7 +349,10 @@ app.post("/api/request-reward", async (req, res) => {
       [user_id]
     );
 
-    if (studentQuery.rows.length === 0 || studentQuery.rows[0].total_points < points_required) {
+    if (
+      studentQuery.rows.length === 0 ||
+      studentQuery.rows[0].total_points < points_required
+    ) {
       return res.status(400).json({ error: "Insufficient points" });
     }
 
@@ -320,14 +368,16 @@ app.post("/api/request-reward", async (req, res) => {
       [user_id, reward_id, points_required]
     );
 
-    res.status(201).json({ message: "Reward request submitted successfully, points deducted" });
+    res.status(201).json({
+      message: "Reward request submitted successfully, points deducted",
+    });
   } catch (error) {
     console.error("Error requesting reward:", error);
     res.status(500).json({ error: "Database error" });
   }
 });
 
-app.get('/users/:e_passport', async (req, res) => {
+app.get("/users/:e_passport", async (req, res) => {
   try {
     const { e_passport } = req.params;
 
@@ -346,14 +396,13 @@ app.get('/users/:e_passport', async (req, res) => {
     if (result.rows.length > 0) {
       res.json(result.rows[0]);
     } else {
-      res.status(404).json({ message: 'User not found' });
+      res.status(404).json({ message: "User not found" });
     }
   } catch (error) {
-    console.error('Error fetching user details:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error fetching user details:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 
 // Admin
 // app.post("/change-role",authenticateJWT,authorizeRoles("admin"),async (req, res) => {
@@ -373,12 +422,6 @@ app.get('/users/:e_passport', async (req, res) => {
 //     }
 //   }
 // );
-
-
-
-
-
-
 
 /* PROFESSOR */
 
@@ -414,7 +457,6 @@ app.get("/professor/request-list", async (req, res) => {
   }
 });
 
-
 app.get("/professor/affective-hisotry", async (req, res) => {
   try {
     const result = await pool.query(
@@ -446,129 +488,137 @@ app.get("/professor/affective-hisotry", async (req, res) => {
   }
 });
 
-
-
-
-
-
 /* STAFF */
 
-app.post("/staff/add-reward", upload.single("reward_image"), async (req, res) => {
-  const { reward_type, reward_name, reward_quantity, points_required } = req.body;
-  
-  if (!reward_name || !reward_quantity || !points_required) {
-    return res.status(400).json({ error: "Missing required reward details" });
-  }
+app.post(
+  "/staff/add-reward",
+  upload.single("reward_image"),
+  async (req, res) => {
+    const { reward_type, reward_name, reward_quantity, points_required } =
+      req.body;
 
-  const type = reward_type || "stationery";
+    if (!reward_name || !reward_quantity || !points_required) {
+      return res.status(400).json({ error: "Missing required reward details" });
+    }
 
-  try {
-    // First, insert the new reward into the database with a temporary NULL for reward_image
-    const result = await pool.query(
-      `INSERT INTO rewards (reward_type, reward_name, reward_quantity, points_required, reward_image)
+    const type = reward_type || "stationery";
+
+    try {
+      // First, insert the new reward into the database with a temporary NULL for reward_image
+      const result = await pool.query(
+        `INSERT INTO rewards (reward_type, reward_name, reward_quantity, points_required, reward_image)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING reward_id`,
-      [type, reward_name, reward_quantity, points_required, null]
-    );
-    const reward_id = result.rows[0].reward_id;
+        [type, reward_name, reward_quantity, points_required, null]
+      );
+      const reward_id = result.rows[0].reward_id;
 
-    // If a file was uploaded, rename it and update the database
-    if (req.file) {
-      // Log the uploaded file info for debugging
-      console.log('Uploaded file:', req.file);
+      // If a file was uploaded, rename it and update the database
+      if (req.file) {
+        // Log the uploaded file info for debugging
+        console.log("Uploaded file:", req.file);
 
-      // Get the file extension from the original filename
-      const extension = path.extname(req.file.originalname);
-      // Create the new filename in the format reward_{reward_id}.{extension}
-      const newFileName = `reward_${reward_id}${extension}`;
-      const oldPath = path.join(imagesPath, req.file.filename);
-      const newPath = path.join(imagesPath, newFileName);
+        // Get the file extension from the original filename
+        const extension = path.extname(req.file.originalname);
+        // Create the new filename in the format reward_{reward_id}.{extension}
+        const newFileName = `reward_${reward_id}${extension}`;
+        const oldPath = path.join(imagesPath, req.file.filename);
+        const newPath = path.join(imagesPath, newFileName);
 
-      // Rename the file and update the reward_image in the database
-      fs.rename(oldPath, newPath, async (err) => {
-        if (err) {
-          console.error('Error renaming file:', err);
-          return res.status(500).json({ error: "File renaming failed" });
-        }
-        try {
-          // Update the reward record with the new image filename
-          await pool.query(
-            `UPDATE rewards SET reward_image = $1 WHERE reward_id = $2`,
-            [newFileName, reward_id]
-          );
-          res.status(201).json({
-            message: "Reward added successfully",
-            reward_id: reward_id,
-            reward_image: newFileName,
-          });
-        } catch (updateErr) {
-          console.error("Error updating reward with image name:", updateErr);
-          res.status(500).json({ error: "Database update failed" });
-        }
-      });
-    } else {
-      // No file was uploaded; respond normally.
-      res.status(201).json({
-        message: "Reward added successfully (no image uploaded)",
-        reward_id: reward_id,
-        reward_image: null,
-      });
+        // Rename the file and update the reward_image in the database
+        fs.rename(oldPath, newPath, async (err) => {
+          if (err) {
+            console.error("Error renaming file:", err);
+            return res.status(500).json({ error: "File renaming failed" });
+          }
+          try {
+            // Update the reward record with the new image filename
+            await pool.query(
+              `UPDATE rewards SET reward_image = $1 WHERE reward_id = $2`,
+              [newFileName, reward_id]
+            );
+            res.status(201).json({
+              message: "Reward added successfully",
+              reward_id: reward_id,
+              reward_image: newFileName,
+            });
+          } catch (updateErr) {
+            console.error("Error updating reward with image name:", updateErr);
+            res.status(500).json({ error: "Database update failed" });
+          }
+        });
+      } else {
+        // No file was uploaded; respond normally.
+        res.status(201).json({
+          message: "Reward added successfully (no image uploaded)",
+          reward_id: reward_id,
+          reward_image: null,
+        });
+      }
+    } catch (error) {
+      console.error("Error adding reward:", error);
+      res.status(500).json({ error: "Database error" });
     }
-  } catch (error) {
-    console.error("Error adding reward:", error);
-    res.status(500).json({ error: "Database error" });
   }
-});
+);
 
-app.put("/staff/edit-reward/:reward_id", upload.single("reward_image"), async (req, res) => {
-  const { reward_id } = req.params;
-  const { reward_name, reward_quantity, points_required, reward_type } = req.body;
-  
-  try {
-    // First, update the basic reward details
-    await pool.query(
-      `UPDATE rewards SET reward_name = $1, reward_quantity = $2, points_required = $3, reward_type = $4 WHERE reward_id = $5`,
-      [reward_name, reward_quantity, points_required, reward_type, reward_id]
-    );
-    
-    // If a new image was uploaded, handle renaming & update reward_image column
-    if (req.file) {
-      const extension = path.extname(req.file.originalname) || '.jpg';
-      const newFileName = `reward_${reward_id}${extension}`;
-      const oldPath = path.join(imagesPath, req.file.filename);
-      const newPath = path.join(imagesPath, newFileName);
-      
-      fs.rename(oldPath, newPath, async (err) => {
-        if (err) {
-          console.error('Error renaming file:', err);
-          return res.status(500).json({ error: "File renaming failed" });
-        }
-        try {
-          await pool.query(
-            `UPDATE rewards SET reward_image = $1 WHERE reward_id = $2`,
-            [newFileName, reward_id]
-          );
-          res.status(200).json({ message: "Reward updated successfully" });
-        } catch (updateErr) {
-          console.error("Error updating reward image:", updateErr);
-          res.status(500).json({ error: "Database update failed" });
-        }
-      });
-    } else {
-      res.status(200).json({ message: "Reward updated successfully" });
+app.put(
+  "/staff/edit-reward/:reward_id",
+  upload.single("reward_image"),
+  async (req, res) => {
+    const { reward_id } = req.params;
+    const { reward_name, reward_quantity, points_required, reward_type } =
+      req.body;
+
+    try {
+      // First, update the basic reward details
+      await pool.query(
+        `UPDATE rewards SET reward_name = $1, reward_quantity = $2, points_required = $3, reward_type = $4 WHERE reward_id = $5`,
+        [reward_name, reward_quantity, points_required, reward_type, reward_id]
+      );
+
+      // If a new image was uploaded, handle renaming & update reward_image column
+      if (req.file) {
+        const extension = path.extname(req.file.originalname) || ".jpg";
+        const newFileName = `reward_${reward_id}${extension}`;
+        const oldPath = path.join(imagesPath, req.file.filename);
+        const newPath = path.join(imagesPath, newFileName);
+
+        fs.rename(oldPath, newPath, async (err) => {
+          if (err) {
+            console.error("Error renaming file:", err);
+            return res.status(500).json({ error: "File renaming failed" });
+          }
+          try {
+            await pool.query(
+              `UPDATE rewards SET reward_image = $1 WHERE reward_id = $2`,
+              [newFileName, reward_id]
+            );
+            res.status(200).json({ message: "Reward updated successfully" });
+          } catch (updateErr) {
+            console.error("Error updating reward image:", updateErr);
+            res.status(500).json({ error: "Database update failed" });
+          }
+        });
+      } else {
+        res.status(200).json({ message: "Reward updated successfully" });
+      }
+    } catch (error) {
+      console.error("Error updating reward:", error);
+      res.status(500).json({ error: "Database error" });
     }
-  } catch (error) {
-    console.error("Error updating reward:", error);
-    res.status(500).json({ error: "Database error" });
   }
-});
+);
 
 app.delete("/staff/delete-reward/:reward_id", async (req, res) => {
   const reward_id = req.params.reward_id;
 
   try {
     // Optionally, get the reward's image filename so you can delete the file from disk
-    const result = await pool.query(`SELECT reward_image FROM rewards WHERE reward_id = $1`, [reward_id]);
+    const result = await pool.query(
+      `SELECT reward_image FROM rewards WHERE reward_id = $1`,
+      [reward_id]
+    );
     const reward = result.rows[0];
 
     if (!reward) {
@@ -673,11 +723,18 @@ app.post("/api/approve-reward", async (req, res) => {
       return res.status(404).json({ error: "Request not found" });
     }
 
-    const { user_id, reward_id, deducted_points, status: currentStatus } = requestQuery.rows[0];
+    const {
+      user_id,
+      reward_id,
+      deducted_points,
+      status: currentStatus,
+    } = requestQuery.rows[0];
 
     // Only allow processing if the request is still pending.
-    if (currentStatus !== 'กำลังรออนุมัติ') {
-      return res.status(400).json({ error: "This request has already been processed." });
+    if (currentStatus !== "กำลังรออนุมัติ") {
+      return res
+        .status(400)
+        .json({ error: "This request has already been processed." });
     }
 
     if (approval_status === "อนุมัติ") {
@@ -716,11 +773,15 @@ app.post("/api/approve-reward", async (req, res) => {
         [request_id, approved_by]
       );
 
-      return res.status(200).json({ message: "Reward request approved successfully" });
+      return res
+        .status(200)
+        .json({ message: "Reward request approved successfully" });
     } else {
       // Rejection process – ensure a non-empty reason is provided.
       if (!reason || reason.trim() === "") {
-        return res.status(400).json({ error: "Reason is required for rejection" });
+        return res
+          .status(400)
+          .json({ error: "Reason is required for rejection" });
       }
 
       // Refund the points back to the student.
@@ -741,7 +802,9 @@ app.post("/api/approve-reward", async (req, res) => {
         [request_id, approved_by, reason]
       );
 
-      return res.status(200).json({ message: "Reward request rejected, points refunded" });
+      return res
+        .status(200)
+        .json({ message: "Reward request rejected, points refunded" });
     }
   } catch (error) {
     console.error("Error approving request:", error);
@@ -749,64 +812,56 @@ app.post("/api/approve-reward", async (req, res) => {
   }
 });
 
-app.get('/staff/point_expire', async (req, res) => {
+app.get("/staff/point_expire", async (req, res) => {
   try {
-    const query = 'SELECT setting_value FROM global_settings WHERE setting_name = $1';
-    const result = await pool.query(query, ['point_expire']);
-    
+    const query =
+      "SELECT setting_value FROM global_settings WHERE setting_name = $1";
+    const result = await pool.query(query, ["point_expire"]);
+
     if (result.rows.length > 0) {
       // Respond with the current setting value
       res.json({ setting_value: result.rows[0].setting_value });
     } else {
-      res.status(404).json({ error: 'Setting not found' });
+      res.status(404).json({ error: "Setting not found" });
     }
   } catch (error) {
-    console.error('Error fetching point expire:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error fetching point expire:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.put('/staff/point_expire', async (req, res) => {
+app.put("/staff/point_expire", async (req, res) => {
   const { setting_value } = req.body;
-  
+
   if (!setting_value) {
-    return res.status(400).json({ error: 'setting_value is required' });
+    return res.status(400).json({ error: "setting_value is required" });
   }
-  
+
   try {
     const query = `
       UPDATE global_settings 
       SET setting_value = $1 
       WHERE setting_name = $2 
       RETURNING *`;
-    const result = await pool.query(query, [setting_value, 'point_expire']);
-    
+    const result = await pool.query(query, [setting_value, "point_expire"]);
+
     if (result.rowCount > 0) {
       res.json({
-        message: 'Point expire date updated successfully',
+        message: "Point expire date updated successfully",
         setting: result.rows[0],
       });
     } else {
-      res.status(404).json({ error: 'Setting not found' });
+      res.status(404).json({ error: "Setting not found" });
     }
   } catch (error) {
-    console.error('Error updating point expire:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error updating point expire:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-
-
-
-
-
-
-
-
-
 /* ADMIN */
 
-app.get('/api/get-staff', async (req, res) => {
+app.get("/api/get-staff", async (req, res) => {
   try {
     const query = `
       SELECT u.user_id, u.e_passport, u.firstname, u.lastname, u.email, u.facname, u.depname, r.role_id
@@ -820,21 +875,24 @@ app.get('/api/get-staff', async (req, res) => {
     if (result.rows.length > 0) {
       res.json(result.rows);
     } else {
-      res.status(404).json({ message: 'No users found' });
+      res.status(404).json({ message: "No users found" });
     }
   } catch (error) {
-    console.error('Error fetching users:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error fetching users:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.put('/users/role', async (req, res) => {
+app.put("/users/role", async (req, res) => {
   try {
     const { e_passport, new_role_id } = req.body;
 
     // Validate that the new role can only be 2 or 3
     if (![2, 3].includes(new_role_id)) {
-      return res.status(400).json({ error: 'Invalid role. Role can only be changed to 2 (staff) or 3 (professor).' });
+      return res.status(400).json({
+        error:
+          "Invalid role. Role can only be changed to 2 (staff) or 3 (professor).",
+      });
     }
 
     // Check if user exists and already has role 2 or 3
@@ -852,24 +910,27 @@ app.put('/users/role', async (req, res) => {
     const result = await pool.query(updateQuery, [new_role_id, e_passport]);
 
     if (result.rowCount > 0) {
-      res.json({ message: 'Role updated successfully', user: result.rows[0] });
+      res.json({ message: "Role updated successfully", user: result.rows[0] });
     } else {
-      res.status(404).json({ error: 'User not found' });
+      res.status(404).json({ error: "User not found" });
     }
   } catch (error) {
-    console.error('Error updating role:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error updating role:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.put('/users/:user_id/role', async (req, res) => {
+app.put("/users/:user_id/role", async (req, res) => {
   try {
     const { user_id } = req.params;
     const { new_role_id } = req.body;
 
     // Ensure the new role is only 2 or 3
     if (![2, 3].includes(new_role_id)) {
-      return res.status(400).json({ error: 'Invalid role. Role can only be changed between 2 (staff) and 3 (professor).' });
+      return res.status(400).json({
+        error:
+          "Invalid role. Role can only be changed between 2 (staff) and 3 (professor).",
+      });
     }
 
     const query = `
@@ -882,17 +943,19 @@ app.put('/users/:user_id/role', async (req, res) => {
     const result = await pool.query(query, [new_role_id, user_id]);
 
     if (result.rowCount > 0) {
-      res.json({ message: 'Role updated successfully', user: result.rows[0] });
+      res.json({ message: "Role updated successfully", user: result.rows[0] });
     } else {
-      res.status(404).json({ error: 'User not found or role change not allowed' });
+      res
+        .status(404)
+        .json({ error: "User not found or role change not allowed" });
     }
   } catch (error) {
-    console.error('Error updating role:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error updating role:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.delete('/users/:user_id/role', async (req, res) => {
+app.delete("/users/:user_id/role", async (req, res) => {
   try {
     const { user_id } = req.params;
 
@@ -906,21 +969,22 @@ app.delete('/users/:user_id/role', async (req, res) => {
     const result = await pool.query(query, [user_id]);
 
     if (result.rowCount > 0) {
-      res.json({ message: 'Role reset to default (student)', user: result.rows[0] });
+      res.json({
+        message: "Role reset to default (student)",
+        user: result.rows[0],
+      });
     } else {
-      res.status(404).json({ error: 'User not found or role reset not allowed' });
+      res
+        .status(404)
+        .json({ error: "User not found or role reset not allowed" });
     }
   } catch (error) {
-    console.error('Error resetting role:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error resetting role:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
-
-
-
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
-
+console.log(`WebSocket running on ws://0.0.0.0:${WS_PORT}`);

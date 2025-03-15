@@ -67,7 +67,7 @@ const imagePath = path.join(__dirname, "latest_image.jpg");
 wss.on("connection", (ws) => {
   console.log("New client connected");
 
-  ws.on("message", (message) => {
+  ws.on("message", async (message) => {
     const data = message.toString();
     console.log("Received:", data);
 
@@ -84,12 +84,12 @@ wss.on("connection", (ws) => {
         console.log("ESP not connected, can't send FLUTTER_CONNECTED");
       }
     }
-    
 
     // Handle messages
     if (data.startsWith("USER_ID:")) {
       if (espSocket) {
         espSocket.send(data);
+        latestUserId = data.split(":")[1];
         console.log(`User ID sent to ESP: ${data}`);
       } else {
         console.log("ESP not connected!");
@@ -97,32 +97,76 @@ wss.on("connection", (ws) => {
     } else if (data.startsWith("COUNT:")) {
       if (flutterSocket) {
         flutterSocket.send(data);
+        point = 1;
+        total_points = data.split(":")[1];
         console.log(`Count sent to Flutter: ${data}`);
       } else {
         console.log("Flutter not connected!");
       }
     } else if (data.startsWith("IMAGE:")) {
-        const base64Data = data.split(":")[1];
-        const imageBuffer = Buffer.from(base64Data, "base64");
-        
-        // Save the image or upload to the database
-        fs.writeFileSync("image.jpg", imageBuffer);
-        console.log("Image saved!");
-        if (flutterSocket) {
-          flutterSocket.send(data);
-          console.log("Image sent to Flutter");
-        }
+      const base64Data = data.split(":")[1];
+      const imageBuffer = Buffer.from(base64Data, "base64");
+
+      try {
+        // Save to the database
+        await pool.query(
+          "INSERT INTO transactions (user_id, point, total_point, image_base64) VALUES ($1, $2, $3, $4)",
+          [latestUserId, point, total_points, base64Data]
+        );
+        console.log("Transaction saved to DB for User ID:", latestUserId);
+      } catch (err) {
+        console.error("Error saving to DB:", err);
       }
+
+      // Save the image or upload to the database
+      fs.writeFileSync("image.jpg", imageBuffer);
+      console.log("Image saved!");
+      if (flutterSocket) {
+        flutterSocket.send(data);
+        console.log("Image sent to Flutter");
+      }
+    }
   });
 
-  ws.on("close", () => {
+  // ws.on("close", () => {
+  //   if (ws === espSocket) {
+  //     espSocket = null;
+  //     console.log("ESP32 disconnected");
+  //   }
+  //   if (ws === flutterSocket) {
+  //     flutterSocket = null;
+  //     espSocket.send("FLUTTER_DISCONNECTED");
+  //     console.log("Flutter disconnected");
+  //   }
+  // });
+
+  ws.on("close", async () => {
     if (ws === espSocket) {
       espSocket = null;
       console.log("ESP32 disconnected");
     }
     if (ws === flutterSocket) {
       flutterSocket = null;
-      espSocket.send("FLUTTER_DISCONNECTED");
+      if (latestUserId && total_points) {
+        try {
+          const { rows } = await pool.query(
+            "SELECT setting_value FROM global_settings WHERE setting_name = 'point_expire'"
+          );
+          const pointExpire = rows[0]?.setting_value;
+
+          await pool.query(
+            `INSERT INTO reward_points (user_id, total_points, point_expire) 
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id) 
+             DO UPDATE SET total_points = reward_points.total_points + EXCLUDED.total_points, updated_at = NOW()`,
+            [latestUserId, total_points, pointExpire]
+          );
+          console.log(`Total points updated for User ID: ${latestUserId}`);
+        } catch (err) {
+          console.error("Error updating reward points:", err);
+        }
+      }
+      if (espSocket) espSocket.send("FLUTTER_DISCONNECTED");
       console.log("Flutter disconnected");
     }
   });
@@ -699,7 +743,8 @@ app.get("/staff/reward-request-list", async (req, res) => {
        FROM reward_requests rr
        JOIN rewards r ON rr.reward_id = r.reward_id
        JOIN users u ON rr.user_id = u.user_id
-       WHERE rr.status = 'กำลังรออนุมัติ'
+       WHERE (r.reward_type = 'stationery' AND rr.status = 'กำลังรออนุมัติ')
+       OR (r.reward_type = 'certificate' AND rr.status = 'กำลังรออนุมัติ')
        ORDER BY rr.requested_at DESC`
     );
     res.status(200).json(result.rows);

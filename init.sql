@@ -94,6 +94,15 @@ CREATE TABLE "users" (
   "updated_at" TIMESTAMP DEFAULT (NOW())
 );
 
+CREATE TABLE transactions (
+    "id" SERIAL PRIMARY KEY,
+    "user_id" TEXT NOT NULL,
+    "point" INT NOT NULL,
+    "total_point" INT NOT NULL,
+    "image_base64" TEXT NOT NULL,
+    "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 
 ALTER TABLE "users" ADD FOREIGN KEY ("role_id") REFERENCES "roles" ("role_id");
 
@@ -111,11 +120,17 @@ ALTER TABLE "reward_approval" ADD FOREIGN KEY ("approved_by") REFERENCES "users"
 
 ALTER TABLE "bottle_records" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
 
+ALTER TABLE "reward_points" ADD CONSTRAINT "unique_user_id" UNIQUE ("user_id");
+
+
 INSERT INTO "global_settings" ("setting_name", "setting_value")
 VALUES ('point_expire', '2025-12-31');
 
 INSERT INTO "subject" ("subject_name")
 VALUES ('การเขียนโปรแกรม'), ('คิดนอกกรอบ');
+
+INSERT INTO "rewards" ("reward_type", "reward_name", "reward_quantity", "points_required")
+VALUES ('affective_score', 'การเขียนโปรแกรม', 1, 10), ('affective_score', 'คิดนอกกรอบ', 1, 10);
 
 INSERT INTO "roles" ("role_id", "role_name")
 VALUES ('1','admin'), ('2','staff'), ('3','professor'), ('4','student');

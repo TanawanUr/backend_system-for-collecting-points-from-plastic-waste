@@ -324,14 +324,14 @@ app.get("/api/user-history/:userId", async (req, res) => {
 app.get("/api/rewards/stationery", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT reward_id, reward_name, reward_quantity, points_required, reward_image
+      `SELECT reward_id, reward_name, reward_quantity, reward_quantity_total, points_required, reward_image
        FROM rewards 
        WHERE reward_type = 'stationery'`
     );
 
     res.status(200).json(result.rows);
   } catch (error) {
-    console.error("❌ Error fetching certificates:", error);
+    console.error("❌ Error fetching stationery:", error);
     res.status(500).json({ error: "Database error" });
   }
 });
@@ -339,7 +339,7 @@ app.get("/api/rewards/stationery", async (req, res) => {
 app.get("/api/rewards/certificates", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT reward_id, reward_name, reward_quantity, points_required, reward_image
+      `SELECT reward_id, reward_name, reward_quantity, reward_quantity_total, points_required, reward_image
        FROM rewards 
        WHERE reward_type = 'certificate'`
     );
@@ -550,8 +550,8 @@ app.post(
     try {
       // First, insert the new reward into the database with a temporary NULL for reward_image
       const result = await pool.query(
-        `INSERT INTO rewards (reward_type, reward_name, reward_quantity, points_required, reward_image)
-       VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO rewards (reward_type, reward_name, reward_quantity, reward_quantity_total, points_required, reward_image)
+       VALUES ($1, $2, $3, $3, $4, $5)
        RETURNING reward_id`,
         [type, reward_name, reward_quantity, points_required, null]
       );
@@ -617,7 +617,7 @@ app.put(
     try {
       // First, update the basic reward details
       await pool.query(
-        `UPDATE rewards SET reward_name = $1, reward_quantity = $2, points_required = $3, reward_type = $4 WHERE reward_id = $5`,
+        `UPDATE rewards SET reward_name = $1, reward_quantity = $2, reward_quantity_total = $2, points_required = $3, reward_type = $4 WHERE reward_id = $5`,
         [reward_name, reward_quantity, points_required, reward_type, reward_id]
       );
 

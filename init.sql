@@ -64,6 +64,7 @@ CREATE TABLE "rewards" (
   "reward_type" VARCHAR(50) NOT NULL,
   "reward_name" TEXT NOT NULL,
   "reward_quantity" INT NOT NULL,
+  "reward_quantity_total" INT NOT NULL,
   "points_required" INT NOT NULL,
   "reward_image" TEXT,
   "created_at" TIMESTAMP DEFAULT (NOW()),
@@ -96,7 +97,7 @@ CREATE TABLE "users" (
 
 CREATE TABLE transactions (
     "id" SERIAL PRIMARY KEY,
-    "user_id" TEXT NOT NULL,
+    "user_id" INT NOT NULL,
     "point" INT NOT NULL,
     "total_point" INT NOT NULL,
     "image_base64" TEXT NOT NULL,
@@ -109,6 +110,12 @@ ALTER TABLE "users" ADD FOREIGN KEY ("role_id") REFERENCES "roles" ("role_id");
 ALTER TABLE "reward_points" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
 
 ALTER TABLE "reward_requests" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
+
+ALTER TABLE "affective_scores" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
+
+ALTER TABLE "affective_scores" ADD FOREIGN KEY ("subject_id") REFERENCES "subject" ("subject_id");
+
+ALTER TABLE "transactions" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("user_id");
 
 ALTER TABLE "reward_requests" ADD FOREIGN KEY ("reward_id") REFERENCES "rewards" ("reward_id");
 
@@ -129,8 +136,8 @@ VALUES ('point_expire', '2025-12-31');
 INSERT INTO "subject" ("subject_name")
 VALUES ('การเขียนโปรแกรม'), ('คิดนอกกรอบ');
 
-INSERT INTO "rewards" ("reward_type", "reward_name", "reward_quantity", "points_required")
-VALUES ('affective_score', 'การเขียนโปรแกรม', 1, 10), ('affective_score', 'คิดนอกกรอบ', 1, 10);
+INSERT INTO "rewards" ("reward_type", "reward_name", "reward_quantity", "reward_quantity_total", "points_required")
+VALUES ('affective_score', 'การเขียนโปรแกรม', 1, 10, 10), ('affective_score', 'คิดนอกกรอบ', 1, 10, 10);
 
 INSERT INTO "roles" ("role_id", "role_name")
 VALUES ('1','admin'), ('2','staff'), ('3','professor'), ('4','student');

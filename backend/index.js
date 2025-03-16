@@ -61,6 +61,7 @@ const wss = new WebSocket.Server({ port: WS_PORT }, () => {
 let espSocket = null;
 let flutterSocket = null;
 let latestCount = 0;
+let espHeartbeatTimeout = null;
 let latestUserId = "";
 const imagePath = path.join(__dirname, "latest_image.jpg");
 
@@ -75,7 +76,21 @@ wss.on("connection", (ws) => {
     if (data === "ESP_CONNECTED") {
       espSocket = ws;
       console.log("ESP32 connected");
-    } else if (data === "FLUTTER_CONNECTED") {
+      try {
+        await pool.query(
+          "UPDATE esp_devices SET device_status = 'Active', last_updated = NOW() WHERE device_id = $1",
+          [1]
+        );
+        console.log("ESP status updated to Active in DB");
+      } catch (err) {
+        console.error("Error updating ESP status to Active:", err);
+      }
+          // Start heartbeat monitor
+        startHeartbeatMonitor();
+      } else if (data === "PING") {
+        console.log("ESP heartbeat received");
+        resetHeartbeatMonitor();
+      } else if (data === "FLUTTER_CONNECTED") {
       flutterSocket = ws;
       if (espSocket) {
         espSocket.send("FLUTTER_CONNECTED");
@@ -155,13 +170,26 @@ wss.on("connection", (ws) => {
           const pointExpire = rows[0]?.setting_value;
 
           await pool.query(
-            `INSERT INTO reward_points (user_id, total_points, point_expire) 
+            `INSERT INTO reward_points (reward_type, user_id , points) 
+            VALUES ($1, $2, $3)`,
+            ["bottle", latestUserId, total_points]
+          );
+          console.log(`Bottle record inserted for User ID: ${latestUserId}`);
+
+          await pool.query(
+            `INSERT INTO user_points (user_id, total_points, point_expire) 
              VALUES ($1, $2, $3)
              ON CONFLICT (user_id) 
-             DO UPDATE SET total_points = reward_points.total_points + EXCLUDED.total_points, updated_at = NOW()`,
+             DO UPDATE SET total_points = user_points.total_points + EXCLUDED.total_points, updated_at = NOW()`,
             [latestUserId, total_points, pointExpire]
           );
           console.log(`Total points updated for User ID: ${latestUserId}`);
+
+          await pool.query(
+            "UPDATE esp_devices SET device_status = 'Inactive', last_updated = NOW() WHERE device_id = $1",
+            [1] // Replace 1 with the correct device_id if needed
+          );
+          console.log("ESP status updated to Inactive in DB");
         } catch (err) {
           console.error("Error updating reward points:", err);
         }
@@ -171,6 +199,24 @@ wss.on("connection", (ws) => {
     }
   });
 });
+
+function startHeartbeatMonitor() {
+  resetHeartbeatMonitor();
+}
+
+function resetHeartbeatMonitor() {
+  clearTimeout(espHeartbeatTimeout);
+  espHeartbeatTimeout = setTimeout(async () => {
+    console.log("ESP32 heartbeat timeout, marking as inactive...");
+    espSocket = null;
+
+    await pool.query(
+      "UPDATE esp_devices SET device_status = 'Inactive', last_updated = NOW() WHERE device_id = $1",
+      [1]
+    );
+    console.log("ESP status updated to Inactive in DB");
+  }, 10000); // 10-second timeout
+}
 
 app.post("/saveUser", async (req, res) => {
   const { e_passport, firstname, lastname, email, token, facname, depname } =
@@ -266,18 +312,39 @@ app.get("/api/user/:ePassport", async (req, res) => {
   }
 });
 
-// Get Reward History for User
 app.get("/api/reward-history/:userId", async (req, res) => {
   const userId = req.params.userId;
+  const fetchType = req.query.fetchType || "all"; // Default to 'all' if fetchType is not provided
+
+  let query = `
+    SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at,
+           rr.status, r.points_required, r.reward_image, r.reward_id, rr.reason, 
+           NULL AS reward_points_id, NULL AS points, NULL AS created_at
+    FROM reward_requests rr
+    JOIN rewards r ON rr.reward_id = r.reward_id
+    WHERE rr.user_id = $1
+  `;
+  let queryParams = [userId];
+
+  if (fetchType !== "all") {
+    query += ` AND r.reward_type = $2`;
+    queryParams.push(fetchType);
+  }
+
+  query += " UNION ALL ";
+
+  query += `
+    SELECT NULL AS request_id, rp.reward_type, NULL AS reward_name, rp.created_at AS requested_at, 
+           NULL AS reviewed_at, NULL AS status, NULL AS points_required, NULL AS reward_image, 
+           NULL AS reward_id, NULL AS reason, rp.reward_points_id, rp.points, rp.created_at
+    FROM reward_points rp
+    WHERE rp.user_id = $1
+  `;
+
+  query += " ORDER BY requested_at DESC";
+
   try {
-    const result = await pool.query(
-      `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
-              rr.status, r.points_required, r.reward_image, r.reward_id , rr.reason
-       FROM reward_requests rr
-       JOIN rewards r ON rr.reward_id = r.reward_id
-       WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
-      [userId]
-    );
+    const result = await pool.query(query, queryParams);
     res.json(result.rows);
   } catch (error) {
     console.error("Error fetching reward history", error);
@@ -285,41 +352,32 @@ app.get("/api/reward-history/:userId", async (req, res) => {
   }
 });
 
-app.get("/api/user-history/:userId", async (req, res) => {
-  const userId = req.params.userId;
-  try {
-    // Fetch reward history
-    const rewardHistory = await pool.query(
-      `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at, 
-              rr.status, r.points_required, r.reward_image, r.reward_id , rr.reason
-       FROM reward_requests rr
-       JOIN rewards r ON rr.reward_id = r.reward_id
-       WHERE rr.user_id = $1 ORDER BY rr.requested_at DESC`,
-      [userId]
-    );
+// app.get("/api/reward-history/:userId", async (req, res) => {
+//   const userId = req.params.userId;
+//   const fetchType = req.query.fetchType || "all"; // Default to 'all' if fetchType is not provided
 
-    // Fetch affective scores
-    const affectiveScores = await pool.query(
-      `SELECT a.score_id, a.score, a.date_recorded, s.subject_name, 
-              u.firstname, u.lastname, u.facname, u.depname
-       FROM affective_scores a
-       JOIN subject s ON a.subject_id = s.subject_id
-       JOIN users u ON a.user_id = u.user_id
-       WHERE a.user_id = $1
-       ORDER BY a.date_recorded DESC`,
-      [userId]
-    );
+//   let query = `SELECT rr.request_id, r.reward_type, r.reward_name, rr.requested_at, rr.reviewed_at,
+//                       rr.status, r.points_required, r.reward_image, r.reward_id , rr.reason
+//                FROM reward_requests rr
+//                JOIN rewards r ON rr.reward_id = r.reward_id
+//                WHERE rr.user_id = $1`;
+//   let queryParams = [userId];
 
-    // Combine both responses
-    res.json({
-      rewardHistory: rewardHistory.rows,
-      affectiveScores: affectiveScores.rows,
-    });
-  } catch (error) {
-    console.error("Error fetching user history", error);
-    res.status(500).json({ error: "Database error" });
-  }
-});
+//   if (fetchType !== "all") {
+//     query += ` AND r.reward_type = $2`;
+//     queryParams.push(fetchType);
+//   }
+
+//   query += " ORDER BY rr.requested_at DESC";
+
+//   try {
+//     const result = await pool.query(query, queryParams);
+//     res.json(result.rows);
+//   } catch (error) {
+//     console.error("Error fetching reward history", error);
+//     res.status(500).json({ error: "Database error" });
+//   }
+// });
 
 app.get("/api/rewards/stationery", async (req, res) => {
   try {
@@ -389,7 +447,7 @@ app.post("/api/request-reward", async (req, res) => {
 
     // Get student’s available points
     const studentQuery = await pool.query(
-      `SELECT total_points FROM reward_points WHERE user_id = $1`,
+      `SELECT total_points FROM user_points WHERE user_id = $1`,
       [user_id]
     );
 
@@ -402,7 +460,7 @@ app.post("/api/request-reward", async (req, res) => {
 
     // Deduct reward points from user immediately
     await pool.query(
-      `UPDATE reward_points SET total_points = total_points - $1 WHERE user_id = $2`,
+      `UPDATE user_points SET total_points = total_points - $1 WHERE user_id = $2`,
       [points_required, user_id]
     );
 
@@ -427,11 +485,11 @@ app.get("/users/:e_passport", async (req, res) => {
 
     const query = `
       SELECT u.user_id,u.e_passport, u.firstname, u.lastname, u.email, u.facname, u.depname, r.role_name, 
-             COALESCE(rp.total_points, 0) AS total_points,
-             rp.point_expire  -- Fetch point expiration date
+             COALESCE(up.total_points, 0) AS total_points,
+             up.point_expire  -- Fetch point expiration date
       FROM users u
       LEFT JOIN roles r ON u.role_id = r.role_id
-      LEFT JOIN reward_points rp ON u.user_id = rp.user_id
+      LEFT JOIN user_points up ON u.user_id = up.user_id
       WHERE u.e_passport = $1;
     `;
 
@@ -445,6 +503,23 @@ app.get("/users/:e_passport", async (req, res) => {
   } catch (error) {
     console.error("Error fetching user details:", error);
     res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+app.get("/esp-status", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT device_status FROM esp_devices WHERE device_id = $1",
+      [1]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "ESP device not found" });
+    }
+    const status = result.rows[0].device_status;
+    res.json({ status });
+  } catch (err) {
+    console.error("Error fetching ESP status:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 });
 
@@ -831,7 +906,7 @@ app.post("/api/approve-reward", async (req, res) => {
 
       // Refund the points back to the student.
       await pool.query(
-        `UPDATE reward_points SET total_points = total_points + $1 WHERE user_id = $2`,
+        `UPDATE user_points SET total_points = total_points + $1 WHERE user_id = $2`,
         [deducted_points, user_id]
       );
 

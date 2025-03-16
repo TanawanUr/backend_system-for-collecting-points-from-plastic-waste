@@ -18,12 +18,19 @@ CREATE TABLE "affective_scores" (
   "updated_at" TIMESTAMP DEFAULT (NOW())
 );
 
-CREATE TABLE "bottle_records" (
-  "record_id" SERIAL PRIMARY KEY,
+CREATE TABLE "esp_devices" (
+  "device_id" SERIAL PRIMARY KEY,
+  "device_name" VARCHAR(100) NOT NULL,
+  "device_status" VARCHAR(20) DEFAULT 'Inactive',
+  "last_updated" TIMESTAMP DEFAULT (NOW())
+);
+
+CREATE TABLE "reward_points" (
+  "reward_points_id" SERIAL PRIMARY KEY,
+  "reward_type" VARCHAR(50) NOT NULL,
   "user_id" INT,
-  "bottle_count" INT,
-  "image_url" TEXT,
-  "create_at" DATE DEFAULT (NOW()),
+  "points"  INT,
+  "created_at" TIMESTAMP DEFAULT (NOW())
 );
 
 CREATE TABLE "global_settings" (
@@ -40,7 +47,7 @@ CREATE TABLE "reward_approval" (
   "reason" TEXT
 );
 
-CREATE TABLE "reward_points" (
+CREATE TABLE "user_points" (
   "point_id" SERIAL PRIMARY KEY,
   "user_id" INT,
   "total_points" INT NOT NULL DEFAULT 0,

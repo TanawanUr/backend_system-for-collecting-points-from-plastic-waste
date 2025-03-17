@@ -85,12 +85,12 @@ wss.on("connection", (ws) => {
       } catch (err) {
         console.error("Error updating ESP status to Active:", err);
       }
-          // Start heartbeat monitor
-        startHeartbeatMonitor();
-      } else if (data === "PING") {
-        console.log("ESP heartbeat received");
-        resetHeartbeatMonitor();
-      } else if (data === "FLUTTER_CONNECTED") {
+      // Start heartbeat monitor
+      startHeartbeatMonitor();
+    } else if (data === "PING") {
+      console.log("ESP heartbeat received");
+      resetHeartbeatMonitor();
+    } else if (data === "FLUTTER_CONNECTED") {
       flutterSocket = ws;
       if (espSocket) {
         espSocket.send("FLUTTER_CONNECTED");
@@ -1103,6 +1103,54 @@ app.delete("/users/:user_id/role", async (req, res) => {
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+app.get("/summary", async (req, res) => {
+  try {
+    const approvalResult = await pool.query(
+      `SELECT status, COUNT(*) AS count FROM reward_requests GROUP BY status`
+    );
+
+    const total = approvalResult.rows.reduce(
+      (acc, row) => acc + parseInt(row.count),
+      0
+    );
+    const approvalProgress = approvalResult.rows.map((row) => ({
+      percentage: (parseInt(row.count) / total) * 100,
+    }));
+
+    // Count approved requests for each reward type
+    const approvedCounts = await pool.query(
+      `SELECT r.reward_type, COUNT(*) AS count
+       FROM reward_requests rr
+       JOIN rewards r ON rr.reward_id = r.reward_id
+       JOIN reward_approval ra ON rr.request_id = ra.request_id
+       WHERE ra.approval_status = 'อนุมัติ'
+       AND r.reward_type IN ('stationery', 'affective_score', 'certificate')
+       GROUP BY r.reward_type`
+    );
+
+    let stationeryCount = 0;
+    let affectiveScoreCount = 0;
+    let certificateCount = 0;
+
+    approvedCounts.rows.forEach(row => {
+      if (row.reward_type === 'stationery') stationeryCount = parseInt(row.count);
+      if (row.reward_type === 'affective_score') affectiveScoreCount = parseInt(row.count);
+      if (row.reward_type === 'certificate') certificateCount = parseInt(row.count);
+    });
+
+    res.json({
+      approvalProgress: approvalProgress.map(p => p.percentage),
+      stationeryCount,
+      affectiveScoreCount,
+      certificateCount,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
